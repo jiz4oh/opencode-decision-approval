@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { parseConfig } from '../src/config.js'
-import { riskProbability, planEvent, ruleEffect, wildcardMatch, isT3InjectedRule, stripT3Rules } from '../src/policy.js'
+import { isProjectEdit, riskProbability, planEvent, ruleEffect, wildcardMatch, isT3InjectedRule, stripT3Rules } from '../src/policy.js'
 
 const config = parseConfig()
 // Single-resource view of planEvent: { command } for a Jev candidate, else { reason }.
@@ -141,6 +141,8 @@ test('configuration validates thresholds and rejects unsafe changes', () => {
   assert.equal(parseConfig().dryRun, true)
   assert.deepEqual(parseConfig().candidatePrefixes, [])
   assert.throws(() => parseConfig({ riskThreshold: 1 }))
+  assert.equal(parseConfig({ riskThreshold: 0.6 }).riskThreshold, 0.6)
+  assert.throws(() => parseConfig({ riskThreshold: -0.1 }))
   assert.deepEqual(parseConfig().eligibleActions, [])
   assert.deepEqual(parseConfig({ eligibleActions: ['shell', 'edit'] }).eligibleActions, ['shell', 'edit'])
   assert.throws(() => parseConfig({ eligibleActions: 'shell' }))
@@ -148,4 +150,15 @@ test('configuration validates thresholds and rejects unsafe changes', () => {
   assert.throws(() => parseConfig({ dryRun: 'false' }))
   assert.throws(() => parseConfig({ arbitrary: true }))
   assert.throws(() => parseConfig({ candidatePrefixes: ['pwd; rm'] }))
+})
+
+test('edit inside session cwd is allowed locally; secrets, outside paths and globs are not', () => {
+  const cwd = '/repo'
+  for (const p of ['src/a.js', '/repo/app/views/x.erb', 'config/app.yml', '.env.example', 'test/token_helper_spec.rb'.replace('token_', '')]) assert.equal(isProjectEdit('edit', p, cwd), true, p)
+  for (const p of ['../x.js', '/etc/hosts', '~/.zshrc', '.env', 'config/.env.local', '.ssh/config', 'certs/a.pem', '.git/config', 'src/*', 'config/credentials.yml', '/repo']) assert.equal(isProjectEdit('edit', p, cwd), false, p)
+  assert.equal(isProjectEdit('edit', 'src/a.js', null), false)
+  assert.equal(isProjectEdit('read', 'src/a.js', cwd), false)
+  const plan = planEvent({ sessionID: 's', action: 'edit', resources: ['src/a.js', '/etc/hosts'], effect: 'ask' }, config, null, cwd)
+  assert.deepEqual(plan.resources.map((r) => r.reason), ['project_edit_allow', 'jev_candidate'])
+  assert.deepEqual(plan.jev, [{ index: 1, command: '/etc/hosts' }])
 })

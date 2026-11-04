@@ -2,7 +2,7 @@ import { loadConfig } from './config.js'
 import { planEvent, stripT3Rules, normalizeRules } from './policy.js'
 import { evaluateJev } from './decision.js'
 import { createAudit } from './audit.js'
-import { gatherContext } from './context.js'
+import { gatherContext, sessionInfo } from './context.js'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -16,14 +16,18 @@ async function safeAudit(audit, record) {
   try { await audit(record); return true } catch { return false }
 }
 
-export function createHandler({ config, generate, audit, collect = null, rules = null }) {
+export function createHandler({ config, generate, audit, collect = null, rules = null, cwd = null }) {
   return async (event) => {
     if (!config.enabled || event.effect !== 'ask') return
     let ruleset = null
     if (rules) {
       try { ruleset = await rules(event) } catch { ruleset = null }
     }
-    const plan = planEvent(event, config, ruleset)
+    let dir = null
+    if (cwd && event.action === 'edit') {
+      try { dir = await cwd(event) } catch { dir = null }
+    }
+    const plan = planEvent(event, config, ruleset, dir)
     const rulesSource = Array.isArray(ruleset) ? 'agent' : 'unavailable'
 
     // Step 2: any rule deny denies the whole event (dry-run only records it).
@@ -60,8 +64,8 @@ export function createHandler({ config, generate, audit, collect = null, rules =
     const ok = await safeAudit(audit, entry(event, {
       decision,
       effective: next,
-      reason: failed ? failed.reason : (config.dryRun ? 'dry_run' : 'jev_low_risk'),
-      riskProbability: scores.length === verdicts.length ? Math.max(...scores) : null,
+      reason: failed ? failed.reason : (config.dryRun ? 'dry_run' : (verdicts.length ? 'jev_low_risk' : 'project_edit_allow')),
+      riskProbability: verdicts.length && scores.length === verdicts.length ? Math.max(...scores) : null,
       rules: rulesSource,
       resources,
     }))
@@ -127,6 +131,7 @@ export async function install(ctx) {
     audit,
     collect: (event, command) => gatherContext({ event, command, ctx }),
     rules: (event) => loadAgentRules(ctx, event),
+    cwd: async (event) => (await sessionInfo(ctx, event.sessionID)).cwd ?? (typeof event.metadata?.cwd === 'string' ? event.metadata.cwd : null),
   })
   const registration = await ctx.permission.hook('evaluate', handle)
   return () => registration.dispose()

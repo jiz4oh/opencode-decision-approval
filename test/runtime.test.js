@@ -274,3 +274,20 @@ test('overlay: specific global allow stays rule_allow while allow-all-only resou
   assert.deepEqual(seen, [])
   assert.equal(solo.effect, 'allow')
 })
+
+test('project edit is allowed without Jev; audit omits path', async () => {
+  const entries = []
+  let calls = 0
+  const handle = createHandler({ config: parseConfig({ dryRun: false, riskThreshold: 0.6 }), generate: async () => { calls++; return output(0.9) },
+    audit: async (e) => entries.push(e), cwd: async () => '/repo' })
+  const ev = { sessionID: 's', action: 'edit', resources: ['/repo/src/a.js'], effect: 'ask' }
+  await handle(ev)
+  assert.equal(ev.effect, 'allow')
+  assert.equal(calls, 0)
+  assert.equal(entries[0].reason, 'project_edit_allow')
+  assert.equal(JSON.stringify(entries[0]).includes('a.js'), false)
+  const secret = { ...ev, resources: ['/repo/.env'], effect: 'ask' }
+  await handle(secret)
+  assert.equal(secret.effect, 'ask')
+  assert.equal(calls, 1)
+})

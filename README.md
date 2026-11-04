@@ -79,7 +79,7 @@ See [`examples/decision-approval.json`](examples/decision-approval.json).
 | `dryRun` | `true` | Evaluate and audit, never auto-approve |
 | `mode` | `on-ask` | Only review existing permission prompts |
 | `model.providerID` / `model.id` | `opencode` / `jev-1.13` | OpenCode model reference, not an API endpoint |
-| `riskThreshold` | `0.01` | Maximum probability of risk eligible for auto-approval (range 0–0.5) |
+| `riskThreshold` | `0.01` | Maximum probability of risk eligible for auto-approval (range 0 to <1; OpenChamber safetyNet uses 0.6) |
 | `timeoutMs` | `6500` | Max wait before leaving approval to the user (1000–15000 ms) |
 | `maxCommandLength` | `5000` | Maximum resource length inspected |
 | `candidatePrefixes` | `[]` | Prefixes that **skip Jev** and stay as native human ask; unmatched safe commands go to Jev |

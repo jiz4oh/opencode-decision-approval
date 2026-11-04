@@ -1,3 +1,4 @@
+import { isAbsolute, relative, resolve } from 'node:path'
 // Conservative command gate adapted from the author's paseo-jev-approver.
 // Per-resource pipeline (OpenCode may split one shell call into several resources;
 // they are NEVER joined):
@@ -99,7 +100,7 @@ export function classifyResource(command, config, action = 'shell') {
 // Steps 1-4. Returns { reason } for event-level human ask, { effect: 'deny', ... },
 // or { jev: [{ index, command }], resources } where resources is the audit path.
 // `rules` null/undefined means rules unavailable: every resource is treated as ask.
-export function planEvent(event, config, rules = null) {
+export function planEvent(event, config, rules = null, cwd = null) {
   if (!event || event.effect !== 'ask') return { reason: 'not_pending' }
   if (typeof event.action !== 'string' || !event.action) return { reason: 'ambiguous_resources' }
   const eligible = config.eligibleActions ?? []
@@ -126,6 +127,9 @@ export function planEvent(event, config, rules = null) {
   const jev = []
   for (const r of resources) {
     if (r.rule === 'allow' && !overlay) { path.push({ index: r.index, rule: 'allow', reason: 'rule_allow' }); continue }
+    if ((r.rule === 'ask' || r.broad) && isProjectEdit(event.action, r.command, cwd)) {
+      path.push({ index: r.index, rule: r.rule, reason: 'project_edit_allow' }); continue
+    }
     const c = classifyResource(r.command, config, event.action)
     if (overlay && !r.broad) {
       // Specific allow under the overlay: no Jev, but the plugin's local risk filters still apply.
@@ -137,9 +141,18 @@ export function planEvent(event, config, rules = null) {
     if (c.reason) path.push({ ...base, reason: c.reason })
     else { path.push({ ...base, reason: 'jev_candidate' }); jev.push({ index: r.index, command: c.command }) }
   }
-  const human = path.find((r) => r.reason !== 'rule_allow' && r.reason !== 'jev_candidate')
+  const human = path.find((r) => !['rule_allow', 'jev_candidate', 'project_edit_allow'].includes(r.reason))
   if (human) return { reason: human.reason, resources: path }
   return { jev, resources: path }
+}
+
+// Scoped local allow: an `edit` of a non-secret path inside the session cwd skips Jev.
+const SENSITIVE_PATH = /(?:^|\/)(?:\.env(?:\.(?!example$)[^/]*)?|\.ssh|\.gnupg|\.aws|\.git|\.npmrc|\.netrc|id_[a-z0-9_]+|[^/]*\.(?:pem|key|p12|pfx)|[^/]*(?:credential|secret|token|password)[^/]*)(?:\/|$)/i
+export function isProjectEdit(action, resource, cwd) {
+  if (action !== 'edit' || typeof cwd !== 'string' || !isAbsolute(cwd) || resource.includes('\x00') || /[*?]/.test(resource)) return false
+  const full = resolve(cwd, resource.startsWith('~') ? '/nonexistent' + resource : resource)
+  const rel = relative(resolve(cwd), full)
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel) && !SENSITIVE_PATH.test(rel)
 }
 
 export function riskProbability(result) {

@@ -43,8 +43,8 @@ export function parseConfig(input = {}) {
       throw new Error(`model.${field} must be a nonempty string`)
     }
   }
-  if (!Number.isFinite(config.riskThreshold) || config.riskThreshold < 0 || config.riskThreshold > 0.5) {
-    throw new Error('riskThreshold must be between 0 and 0.5')
+  if (!Number.isFinite(config.riskThreshold) || config.riskThreshold < 0 || config.riskThreshold >= 1) {
+    throw new Error('riskThreshold must be >= 0 and < 1')
   }
   if (!Number.isInteger(config.timeoutMs) || config.timeoutMs < 1000 || config.timeoutMs > 15000) {
     throw new Error('timeoutMs must be an integer between 1000 and 15000')
