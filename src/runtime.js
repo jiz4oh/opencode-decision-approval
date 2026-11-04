@@ -1,5 +1,5 @@
 import { loadConfig } from './config.js'
-import { planEvent } from './policy.js'
+import { planEvent, stripT3Rules } from './policy.js'
 import { evaluateJev } from './decision.js'
 import { createAudit } from './audit.js'
 import { gatherContext } from './context.js'
@@ -72,17 +72,20 @@ export function createHandler({ config, generate, audit, collect = null, rules =
 // missing rules degrade to "every resource is ask" (more review, never more allow).
 export async function loadAgentRules(ctx, event) {
   let agentID = typeof event.agent === 'string' && event.agent ? event.agent : null
-  if (!agentID && typeof ctx?.session?.get === 'function') {
+  let sessionRules = []
+  if (typeof ctx?.session?.get === 'function') {
     try {
       let s = await ctx.session.get({ sessionID: event.sessionID })
       s = s?.data ?? s
-      if (typeof s?.agent === 'string' && s.agent) agentID = s.agent
-    } catch { agentID = null }
+      if (!agentID && typeof s?.agent === 'string' && s.agent) agentID = s.agent
+      // Session rules are not in the SDK type today; if exposed, drop t3code's overlay.
+      sessionRules = stripT3Rules(s?.permission ?? s?.permissions)
+    } catch { sessionRules = [] }
   }
   if (!agentID || typeof ctx?.agent?.get !== 'function') return null
   const res = await ctx.agent.get({ agentID })
   const permissions = (res?.data ?? res)?.permissions
-  return Array.isArray(permissions) ? permissions : null
+  return Array.isArray(permissions) ? [...permissions, ...sessionRules] : null
 }
 
 export async function install(ctx) {

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { parseConfig } from '../src/config.js'
-import { riskProbability, planEvent, ruleEffect, wildcardMatch } from '../src/policy.js'
+import { riskProbability, planEvent, ruleEffect, wildcardMatch, isT3InjectedRule, stripT3Rules } from '../src/policy.js'
 
 const config = parseConfig()
 // Single-resource view of planEvent: { command } for a Jev candidate, else { reason }.
@@ -53,8 +53,26 @@ test('per-resource pipeline: rule deny wins, rule allow drops out, asks go throu
   // Rule-allowed resources skip plugin lists (they are already allowed by OpenCode).
   const allowedRisky = planEvent({ ...event('unused'), resources: ['ls ~/.ssh', 'pwd'] }, config, rules)
   assert.deepEqual(allowedRisky.jev, [{ index: 1, command: 'pwd' }])
-  const mismatch = planEvent({ ...event('unused'), resources: ['ls -la'] }, config, rules)
-  assert.equal(mismatch.reason, 'rule_view_mismatch')
+  // All rule-allowed but OpenCode asked => invisible session overlay (t3code): ignored,
+  // resources go through plugin lists + Jev instead of dead-ending.
+  const overlay = planEvent({ ...event('unused'), resources: ['ls -la', 'ls ~/.ssh'] }, config, rules)
+  assert.equal(overlay.reason, 'local_risk_filter')
+  assert.deepEqual(overlay.resources.map((r) => r.overlay), ['session_ask_ignored', 'session_ask_ignored'])
+  const overlayJev = planEvent({ ...event('unused'), resources: ['ls -la'] }, config, rules)
+  assert.deepEqual(overlayJev.jev, [{ index: 0, command: 'ls -la' }])
+})
+
+test('t3code injected session rules are recognized and stripped; user rules survive', () => {
+  for (const rule of [
+    { permission: 'bash', pattern: '*', action: 'ask' }, { permission: '*', pattern: '*', action: 'ask' },
+    { permission: '*', pattern: '*', action: 'deny' }, { permission: 'external_directory', pattern: '*', action: 'ask' },
+    { permission: 'edit', pattern: '*', action: 'allow' }, { permission: 'read', pattern: '*.env', action: 'ask' },
+    { permission: '*', pattern: '*', action: 'allow' }, { permission: 'external_directory', pattern: '/w/repo/*', action: 'allow' },
+  ]) assert.equal(isT3InjectedRule(rule), true, JSON.stringify(rule))
+  const user = [{ permission: 'bash', pattern: 'git push *', action: 'deny' }, { action: 'shell', resource: 'ls *', effect: 'allow' }]
+  assert.deepEqual(stripT3Rules([{ permission: 'bash', pattern: '*', action: 'ask' }, ...user]),
+    [{ action: 'shell', resource: 'git push *', effect: 'deny' }, { action: 'shell', resource: 'ls *', effect: 'allow' }])
+  assert.deepEqual(stripT3Rules(undefined), [])
 })
 
 test('hard local filters reject sensitive tools, paths and options, even inside compounds', () => {

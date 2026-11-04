@@ -31,6 +31,42 @@ export function ruleEffect(action, resource, rules) {
   return hit && ['allow', 'deny', 'ask'].includes(hit.effect) ? hit.effect : 'ask'
 }
 
+// t3code (T3 Code Beta, OpencodeAdapter openCodePermissionRules) injects these session
+// rules via session.create/update({ permission }). They are a UI approval overlay, not
+// the user's policy, so they are stripped from any session ruleset the plugin can see.
+const T3_RESTRICTED = ['bash', 'edit', 'webfetch', 'websearch', 'codesearch', 'external_directory', 'doom_loop']
+const T3_ALWAYS_ALLOWED = ['question', 'read', 'glob', 'grep', 'lsp', 'todowrite', 'task', 'skill']
+const T3_SIGNATURES = new Set([
+  ...['*', ...T3_RESTRICTED].flatMap((p) => [`${p}|*|deny`, `${p}|*|ask`]),
+  '*|*|allow', 'edit|*|allow', 'webfetch|*|allow', 'websearch|*|allow', 'codesearch|*|allow', 'external_directory|*|allow',
+  ...T3_ALWAYS_ALLOWED.map((p) => `${p}|*|allow`),
+  ...['ask', 'deny'].flatMap((a) => [`read|*.env|${a}`, `read|*.env.*|${a}`]), 'read|*.env.example|allow',
+])
+
+// Normalize a session rule ({permission,pattern,action} or {action,resource,effect}) to
+// the V2 shape; null when malformed. `bash` is the legacy name of the `shell` action.
+export function normalizeRule(rule) {
+  if (!rule || typeof rule !== 'object') return null
+  const action = rule.resource !== undefined ? rule.action : rule.permission
+  const resource = rule.resource ?? rule.pattern
+  const effect = rule.effect ?? (rule.resource === undefined ? rule.action : undefined)
+  if (typeof action !== 'string' || typeof resource !== 'string' || !['allow', 'deny', 'ask'].includes(effect)) return null
+  return { action, resource, effect }
+}
+
+export function isT3InjectedRule(rule) {
+  const r = normalizeRule(rule)
+  if (!r) return false
+  if (r.resource.endsWith('/*') && r.action === 'external_directory' && r.effect === 'allow') return true // writableRoots
+  return T3_SIGNATURES.has(`${r.action}|${r.resource}|${r.effect}`)
+}
+
+export function stripT3Rules(rules) {
+  if (!Array.isArray(rules)) return []
+  return rules.filter((rule) => !isT3InjectedRule(rule)).map(normalizeRule).filter(Boolean)
+    .map((r) => (r.action === 'bash' ? { ...r, action: 'shell' } : r))
+}
+
 // Step 3 for one resource: plugin lists decide human ask, otherwise Jev candidate.
 export function classifyResource(command, config) {
   if (!command.trim() || command.length > config.maxCommandLength || command.trim() !== command || command.includes('\x00')) {
@@ -56,18 +92,21 @@ export function planEvent(event, config, rules = null) {
   if (resources.some((r) => r.rule === 'deny')) {
     return { effect: 'deny', reason: 'rule_deny', resources: resources.map(({ index, rule }) => ({ index, rule, reason: rule === 'deny' ? 'rule_deny' : null })) }
   }
+  // OpenCode asked although every resource is allowed by the rules we can see: the ask
+  // comes from session-level rules invisible to plugins (t3code's injected sessionRules
+  // such as `bash * ask`). Ignore that overlay and run every resource through steps 3-5.
+  const overlay = resources.every((r) => r.rule === 'allow')
   const path = []
   const jev = []
   for (const r of resources) {
-    if (r.rule === 'allow') { path.push({ index: r.index, rule: 'allow', reason: 'rule_allow' }); continue }
+    if (r.rule === 'allow' && !overlay) { path.push({ index: r.index, rule: 'allow', reason: 'rule_allow' }); continue }
     const c = classifyResource(r.command, config)
-    if (c.reason) path.push({ index: r.index, rule: 'ask', reason: c.reason })
-    else { path.push({ index: r.index, rule: 'ask', reason: 'jev_candidate' }); jev.push({ index: r.index, command: c.command }) }
+    const base = overlay ? { index: r.index, rule: 'allow', overlay: 'session_ask_ignored' } : { index: r.index, rule: 'ask' }
+    if (c.reason) path.push({ ...base, reason: c.reason })
+    else { path.push({ ...base, reason: 'jev_candidate' }); jev.push({ index: r.index, command: c.command }) }
   }
   const human = path.find((r) => r.reason !== 'rule_allow' && r.reason !== 'jev_candidate')
   if (human) return { reason: human.reason, resources: path }
-  // OpenCode said ask, yet every resource is rule-allowed by what we can see: keep ask.
-  if (jev.length === 0) return { reason: 'rule_view_mismatch', resources: path }
   return { jev, resources: path }
 }
 

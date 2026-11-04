@@ -195,3 +195,19 @@ test('loadAgentRules reads the agent ruleset via the SDK, falling back to the se
   assert.deepEqual(asked, ['plan', 'build'])
   assert.equal(await loadAgentRules({}, { sessionID: 's' }), null)
 })
+
+test('loadAgentRules appends non-t3 session rules and drops t3code overlay rules', async () => {
+  const ctx = { agent: { get: async () => ({ data: { permissions: [{ action: '*', resource: '*', effect: 'allow' }] } }) },
+    session: { get: async () => ({ agent: 'build', permission: [{ permission: 'bash', pattern: '*', action: 'ask' }, { permission: 'bash', pattern: 'dd *', action: 'deny' }] }) } }
+  assert.deepEqual(await loadAgentRules(ctx, { sessionID: 's' }), [{ action: '*', resource: '*', effect: 'allow' }, { action: 'shell', resource: 'dd *', effect: 'deny' }])
+})
+
+test('t3code shell ask overlay over agent allow-all: pwd goes to Jev and can be allowed', async () => {
+  const seen = []
+  const handle = createHandler({ config: parseConfig({ dryRun: false }), generate: async (i) => { seen.push(i.input[0].value.command); return output(0) }, audit: async () => {},
+    rules: async () => [{ action: '*', resource: '*', effect: 'allow' }] })
+  const ev = { sessionID: 's', action: 'shell', resources: ['pwd'], effect: 'ask' }
+  await handle(ev)
+  assert.deepEqual(seen, ['pwd'])
+  assert.equal(ev.effect, 'allow')
+})
