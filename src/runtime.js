@@ -3,6 +3,9 @@ import { planEvent, stripT3Rules } from './policy.js'
 import { evaluateJev } from './decision.js'
 import { createAudit } from './audit.js'
 import { gatherContext } from './context.js'
+import { readFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 // Audit entries carry reason codes, rule effects and resource indexes only: never commands.
 function entry(event, fields) {
@@ -70,7 +73,25 @@ export function createHandler({ config, generate, audit, collect = null, rules =
 // Step 1 input: the resolved agent ruleset exposed by the plugin SDK (ctx.agent.get).
 // Session-level runtime rules and saved "always" approvals are not exposed to plugins;
 // missing rules degrade to "every resource is ask" (more review, never more allow).
-export async function loadAgentRules(ctx, event) {
+// Global `permissions` from the managed OpenCode config (the plugin SDK exposes no config
+// API). Same V2 rule shape OpenCode uses; malformed entries are dropped; [] on failure.
+export function globalConfigPath() {
+  return join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencode', 'opencode.json')
+}
+
+export async function loadGlobalRules(read = readFile, path = globalConfigPath()) {
+  try {
+    const parsed = JSON.parse(await read(path, 'utf8'))
+    const list = parsed?.permissions ?? parsed?.permission
+    return Array.isArray(list) ? stripT3Rules(list) : []
+  } catch { return [] }
+}
+
+// Step 1 ruleset, last match wins like OpenCode. OpenCode 2.2.5 builds an agent's rules as
+// built-in agent defaults followed by the config `permissions` (agent.transform pushes them),
+// then session rules. ctx.agent.get returns the pre-transform defaults (often ending in a
+// catch-all ask), so the order here is agent defaults -> global config -> non-t3 session rules. Returns null only when nothing at all could be loaded.
+export async function loadAgentRules(ctx, event, globalRules = () => loadGlobalRules()) {
   let agentID = typeof event.agent === 'string' && event.agent ? event.agent : null
   let sessionRules = []
   if (typeof ctx?.session?.get === 'function') {
@@ -82,10 +103,18 @@ export async function loadAgentRules(ctx, event) {
       sessionRules = stripT3Rules(s?.permission ?? s?.permissions)
     } catch { sessionRules = [] }
   }
-  if (!agentID || typeof ctx?.agent?.get !== 'function') return null
-  const res = await ctx.agent.get({ agentID })
-  const permissions = (res?.data ?? res)?.permissions
-  return Array.isArray(permissions) ? [...permissions, ...sessionRules] : null
+  let global = []
+  try { global = await globalRules() } catch { global = [] }
+  let agent = null
+  if (agentID && typeof ctx?.agent?.get === 'function') {
+    try {
+      const res = await ctx.agent.get({ agentID })
+      const permissions = (res?.data ?? res)?.permissions
+      if (Array.isArray(permissions)) agent = permissions
+    } catch { agent = null }
+  }
+  if (agent === null && global.length === 0 && sessionRules.length === 0) return null
+  return [...(agent ?? []), ...global, ...sessionRules]
 }
 
 export async function install(ctx) {

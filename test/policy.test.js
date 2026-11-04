@@ -58,7 +58,12 @@ test('per-resource pipeline: rule deny wins, rule allow drops out, asks go throu
   const overlay = planEvent({ ...event('unused'), resources: ['ls -la', 'ls ~/.ssh'] }, config, rules)
   assert.equal(overlay.reason, 'local_risk_filter')
   assert.deepEqual(overlay.resources.map((r) => r.overlay), ['session_ask_ignored', 'session_ask_ignored'])
-  const overlayJev = planEvent({ ...event('unused'), resources: ['ls -la'] }, config, rules)
+  // Specific allow under the overlay: rule_allow, no Jev.
+  const overlaySpecific = planEvent({ ...event('unused'), resources: ['ls -la'] }, config, rules)
+  assert.deepEqual(overlaySpecific.jev, [])
+  assert.deepEqual(overlaySpecific.resources.map((r) => r.reason), ['rule_allow'])
+  // Allowed only by a bare `*` rule under the overlay: goes to Jev.
+  const overlayJev = planEvent({ ...event('unused'), resources: ['ls -la'] }, config, [{ action: '*', resource: '*', effect: 'allow' }])
   assert.deepEqual(overlayJev.jev, [{ index: 0, command: 'ls -la' }])
 })
 

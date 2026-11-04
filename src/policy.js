@@ -24,11 +24,15 @@ export function wildcardMatch(value, pattern) {
 }
 
 // Port of OpenCode rule evaluation: last matching rule wins, default ask.
-export function ruleEffect(action, resource, rules) {
-  if (!Array.isArray(rules)) return 'ask'
+export function ruleHit(action, resource, rules) {
+  if (!Array.isArray(rules)) return null
   const hit = rules.findLast((rule) => rule && typeof rule.action === 'string' && typeof rule.resource === 'string' &&
     wildcardMatch(action, rule.action) && wildcardMatch(resource, rule.resource))
-  return hit && ['allow', 'deny', 'ask'].includes(hit.effect) ? hit.effect : 'ask'
+  return hit && ['allow', 'deny', 'ask'].includes(hit.effect) ? hit : null
+}
+
+export function ruleEffect(action, resource, rules) {
+  return ruleHit(action, resource, rules)?.effect ?? 'ask'
 }
 
 // t3code (T3 Code Beta, OpencodeAdapter openCodePermissionRules) injects these session
@@ -88,19 +92,31 @@ export function planEvent(event, config, rules = null) {
   if (!Array.isArray(list) || list.length === 0 || !list.every((r) => typeof r === 'string')) {
     return { reason: 'ambiguous_resources' }
   }
-  const resources = list.map((command, index) => ({ index, rule: Array.isArray(rules) ? ruleEffect(event.action, command, rules) : 'ask', command }))
+  const resources = list.map((command, index) => {
+    const hit = ruleHit(event.action, command, rules)
+    // `broad`: allowed only by a bare `*` resource rule (e.g. an allow-all agent default).
+    return { index, rule: hit?.effect ?? 'ask', broad: hit?.resource === '*', command }
+  })
   if (resources.some((r) => r.rule === 'deny')) {
     return { effect: 'deny', reason: 'rule_deny', resources: resources.map(({ index, rule }) => ({ index, rule, reason: rule === 'deny' ? 'rule_deny' : null })) }
   }
   // OpenCode asked although every resource is allowed by the rules we can see: the ask
   // comes from session-level rules invisible to plugins (t3code's injected sessionRules
-  // such as `bash * ask`). Ignore that overlay and run every resource through steps 3-5.
+  // such as `bash * ask`). Ignore that overlay: resources allowed only by a bare `*` rule
+  // go through steps 3-5; resources allowed by a specific rule (e.g. global
+  // `rtk git status *`) stay rule_allow and never reach Jev.
   const overlay = resources.every((r) => r.rule === 'allow')
   const path = []
   const jev = []
   for (const r of resources) {
     if (r.rule === 'allow' && !overlay) { path.push({ index: r.index, rule: 'allow', reason: 'rule_allow' }); continue }
     const c = classifyResource(r.command, config)
+    if (overlay && !r.broad) {
+      // Specific allow under the overlay: no Jev, but the plugin's local risk filters still apply.
+      const risky = c.reason === 'local_risk_filter' || c.reason === 'unsafe_option' || c.reason === 'invalid_command'
+      path.push({ index: r.index, rule: 'allow', overlay: 'session_ask_ignored', reason: risky ? c.reason : 'rule_allow' })
+      continue
+    }
     const base = overlay ? { index: r.index, rule: 'allow', overlay: 'session_ask_ignored' } : { index: r.index, rule: 'ask' }
     if (c.reason) path.push({ ...base, reason: c.reason })
     else { path.push({ ...base, reason: 'jev_candidate' }); jev.push({ index: r.index, command: c.command }) }

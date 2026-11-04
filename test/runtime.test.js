@@ -2,7 +2,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { parseConfig, loadConfig } from '../src/config.js'
 import { evaluateJev } from '../src/decision.js'
-import { createHandler, loadAgentRules } from '../src/runtime.js'
+import { createHandler, loadAgentRules, loadGlobalRules } from '../src/runtime.js'
+
+const noGlobal = async () => []
 
 const event = (command = 'git status') => ({ sessionID: 'ses_1', action: 'shell', resources: [command], effect: 'ask' })
 const output = (risk) => ({ answers: [{ name: 'risk', type: 'predicate', probability: risk }] })
@@ -190,16 +192,16 @@ test('loadAgentRules reads the agent ruleset via the SDK, falling back to the se
   const perms = [{ action: 'shell', resource: '*', effect: 'ask' }]
   const asked = []
   const ctx = { agent: { get: async ({ agentID }) => { asked.push(agentID); return { data: { permissions: perms } } } }, session: { get: async () => ({ agent: 'build' }) } }
-  assert.deepEqual(await loadAgentRules(ctx, { sessionID: 's', agent: 'plan' }), perms)
-  assert.deepEqual(await loadAgentRules(ctx, { sessionID: 's' }), perms)
+  assert.deepEqual(await loadAgentRules(ctx, { sessionID: 's', agent: 'plan' }, noGlobal), perms)
+  assert.deepEqual(await loadAgentRules(ctx, { sessionID: 's' }, noGlobal), perms)
   assert.deepEqual(asked, ['plan', 'build'])
-  assert.equal(await loadAgentRules({}, { sessionID: 's' }), null)
+  assert.equal(await loadAgentRules({}, { sessionID: 's' }, noGlobal), null)
 })
 
 test('loadAgentRules appends non-t3 session rules and drops t3code overlay rules', async () => {
   const ctx = { agent: { get: async () => ({ data: { permissions: [{ action: '*', resource: '*', effect: 'allow' }] } }) },
     session: { get: async () => ({ agent: 'build', permission: [{ permission: 'bash', pattern: '*', action: 'ask' }, { permission: 'bash', pattern: 'dd *', action: 'deny' }] }) } }
-  assert.deepEqual(await loadAgentRules(ctx, { sessionID: 's' }), [{ action: '*', resource: '*', effect: 'allow' }, { action: 'shell', resource: 'dd *', effect: 'deny' }])
+  assert.deepEqual(await loadAgentRules(ctx, { sessionID: 's' }, noGlobal), [{ action: '*', resource: '*', effect: 'allow' }, { action: 'shell', resource: 'dd *', effect: 'deny' }])
 })
 
 test('t3code shell ask overlay over agent allow-all: pwd goes to Jev and can be allowed', async () => {
@@ -210,4 +212,49 @@ test('t3code shell ask overlay over agent allow-all: pwd goes to Jev and can be 
   await handle(ev)
   assert.deepEqual(seen, ['pwd'])
   assert.equal(ev.effect, 'allow')
+})
+
+test('loadGlobalRules reads config permissions and tolerates missing/invalid files', async () => {
+  const file = JSON.stringify({ permissions: [{ action: 'shell', resource: 'rtk git status *', effect: 'allow' }, { action: 'shell', resource: 'bad' }] })
+  assert.deepEqual(await loadGlobalRules(async () => file, 'x'), [{ action: 'shell', resource: 'rtk git status *', effect: 'allow' }])
+  assert.deepEqual(await loadGlobalRules(async () => { throw Error('ENOENT') }, 'x'), [])
+  assert.deepEqual(await loadGlobalRules(async () => '{ // jsonc', 'x'), [])
+})
+
+test('loadAgentRules merges agent defaults, then global config, then non-t3 session rules', async () => {
+  const agent = [{ action: '*', resource: '*', effect: 'ask' }]
+  const global = [{ action: 'shell', resource: 'rtk git status', effect: 'allow' }, { action: 'shell', resource: 'rtk git status *', effect: 'allow' }]
+  const ctx = { agent: { get: async () => ({ data: { permissions: agent } }) },
+    session: { get: async () => ({ agent: 'build', permission: [{ permission: 'bash', pattern: '*', action: 'ask' }, { permission: 'bash', pattern: 'dd *', action: 'deny' }] }) } }
+  assert.deepEqual(await loadAgentRules(ctx, { sessionID: 's' }, async () => global), [...agent, ...global, { action: 'shell', resource: 'dd *', effect: 'deny' }])
+  assert.deepEqual(await loadAgentRules({}, { sessionID: 's' }, async () => global), global)
+})
+
+test('rtk git status --short is allowed by a global rule without calling Jev', async () => {
+  const ctx = { agent: { get: async () => ({ data: { permissions: [{ action: '*', resource: '*', effect: 'ask' }] } }) }, session: { get: async () => ({ agent: 'build' }) } }
+  const global = [{ action: 'shell', resource: 'rtk git status', effect: 'allow' }, { action: 'shell', resource: 'rtk git status *', effect: 'allow' }]
+  const seen = []; const entries = []
+  const handle = createHandler({ config: parseConfig({ dryRun: false }), generate: async (i) => { seen.push(i.input[0].value.command); return output(0) },
+    audit: async (e) => { entries.push(e) }, rules: (ev) => loadAgentRules(ctx, ev, async () => global) })
+  const ev = { sessionID: 's', action: 'shell', resources: ['rtk git status --short', 'make build'], effect: 'ask' }
+  await handle(ev)
+  assert.deepEqual(seen, ['make build'])
+  assert.equal(entries[0].resources.find((r) => r.index === 0).reason, 'rule_allow')
+})
+
+test('overlay: specific global allow stays rule_allow while allow-all-only resources go to Jev', async () => {
+  const seen = []; const entries = []
+  const rules = [{ action: '*', resource: '*', effect: 'allow' }, { action: 'shell', resource: 'rtk git status *', effect: 'allow' }]
+  const handle = createHandler({ config: parseConfig({ dryRun: false }), generate: async (i) => { seen.push(i.input[0].value.command); return output(0) },
+    audit: async (e) => { entries.push(e) }, rules: async () => rules })
+  const ev = { sessionID: 's', action: 'shell', resources: ['rtk git status --short', 'pwd'], effect: 'ask' }
+  await handle(ev)
+  assert.deepEqual(seen, ['pwd'])
+  assert.equal(entries[0].resources[0].reason, 'rule_allow')
+  assert.equal(ev.effect, 'allow')
+  seen.length = 0
+  const solo = { sessionID: 's', action: 'shell', resources: ['rtk git status --short'], effect: 'ask' }
+  await handle(solo)
+  assert.deepEqual(seen, [])
+  assert.equal(solo.effect, 'allow')
 })
