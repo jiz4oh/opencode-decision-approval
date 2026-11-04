@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { parseConfig, loadConfig } from '../src/config.js'
 import { evaluateJev } from '../src/decision.js'
-import { createHandler } from '../src/runtime.js'
+import { createHandler, loadAgentRules } from '../src/runtime.js'
 
 const event = (command = 'git status') => ({ sessionID: 'ses_1', action: 'shell', resources: [command], effect: 'ask' })
 const output = (risk) => ({ answers: [{ name: 'risk', type: 'predicate', probability: risk }] })
@@ -80,9 +80,118 @@ test('candidatePrefixes skip Jev without calling Decision API', async () => {
   assert.equal(entries[0].reason, 'skip_jev_prefix')
 })
 
+test('local skip reasons are audited without calling Decision API', async () => {
+  let calls = 0
+  const entries = []
+  const handle = createHandler({ config: parseConfig({ dryRun: false }), generate: async () => { calls++; return output(0) }, audit: async (entry) => entries.push(entry) })
+  for (const [command, reason] of [['git push', 'local_risk_filter'], ['pwd; rm -rf .', 'local_risk_filter'], ['npm test --config unsafe', 'unsafe_option']]) {
+    entries.length = 0
+    const pending = event(command)
+    await handle(pending)
+    assert.equal(pending.effect, 'ask', command)
+    assert.equal(entries[0]?.reason, reason, command)
+  }
+  assert.equal(calls, 0)
+})
+
+test('compound commands get exactly one Jev call on the full string; one verdict for all', async () => {
+  for (const [risk, effect] of [[0.001, 'allow'], [0.9, 'ask']]) {
+    const seen = []
+    const handle = createHandler({ config: parseConfig({ dryRun: false }), generate: async (input) => { seen.push(input); return output(risk) }, audit: async () => {} })
+    const command = 'pwd; git status | cat\nfor f in a; do echo $f; done'
+    const pending = event(command)
+    await handle(pending)
+    assert.equal(seen.length, 1)
+    assert.equal(seen[0].input[0].value.command, command)
+    assert.equal(seen[0].input[0].value.compoundSegments, undefined)
+    assert.equal(pending.effect, effect)
+  }
+})
+
+test('multi-resource shell: one Jev call per resource, any non-allow asks, all allow allows', async () => {
+  for (const [risks, effect] of [[[0.001, 0.001], 'allow'], [[0.001, 0.9], 'ask']]) {
+    const seen = []
+    const entries = []
+    const handle = createHandler({
+      config: parseConfig({ dryRun: false }),
+      generate: async (input) => { seen.push(input.input[0].value.command); return output(risks[seen.length - 1]) },
+      audit: async (e) => entries.push(e),
+      collect: async (_event, command) => ({ workingDirectory: '/w', sessionTitle: command }),
+    })
+    const pending = { sessionID: 'ses_1', action: 'shell', resources: ['pwd', 'echo compound-verify-ok'], effect: 'ask' }
+    await handle(pending)
+    assert.deepEqual(seen, ['pwd', 'echo compound-verify-ok'])
+    assert.equal(pending.effect, effect)
+    assert.equal(entries.length, 1)
+    assert.deepEqual(entries[0].resources.map((r) => r.index), [0, 1])
+    assert.equal(entries[0].effective, effect)
+    assert.equal(JSON.stringify(entries[0]).includes('compound-verify-ok'), false)
+  }
+})
+
+test('per-resource context comes from collect for each resource', async () => {
+  const collected = []
+  const handle = createHandler({ config: parseConfig({ dryRun: false }), generate: async () => output(0), audit: async () => {},
+    collect: async (_e, command) => { collected.push(command); return null } })
+  await handle({ sessionID: 's', action: 'shell', resources: ['pwd', 'git status'], effect: 'ask' })
+  assert.deepEqual(collected.sort(), ['git status', 'pwd'])
+})
+
+test('OpenCode rules: any deny denies whole event without Jev; dry-run only records it', async () => {
+  const rules = async () => [{ action: 'shell', resource: '*', effect: 'ask' }, { action: 'shell', resource: 'dd *', effect: 'deny' }]
+  for (const [dryRun, effect] of [[false, 'deny'], [true, 'ask']]) {
+    let calls = 0
+    const entries = []
+    const handle = createHandler({ config: parseConfig({ dryRun }), generate: async () => { calls++; return output(0) }, audit: async (e) => entries.push(e), rules })
+    const pending = { sessionID: 's', action: 'shell', resources: ['pwd', 'dd if=x'], effect: 'ask' }
+    await handle(pending)
+    assert.equal(pending.effect, effect)
+    assert.equal(calls, 0)
+    assert.equal(entries[0].reason, 'rule_deny')
+    assert.equal(entries[0].rules, 'agent')
+  }
+})
+
+test('rule-allowed resources skip Jev; rule loading failure treats every resource as ask', async () => {
+  const seen = []
+  const ok = createHandler({ config: parseConfig({ dryRun: false }), generate: async (i) => { seen.push(i.input[0].value.command); return output(0) }, audit: async () => {},
+    rules: async () => [{ action: 'shell', resource: '*', effect: 'ask' }, { action: 'shell', resource: 'ls *', effect: 'allow' }] })
+  const ev = { sessionID: 's', action: 'shell', resources: ['ls -la', 'pwd'], effect: 'ask' }
+  await ok(ev)
+  assert.deepEqual(seen, ['pwd'])
+  assert.equal(ev.effect, 'allow')
+  seen.length = 0
+  const entries = []
+  const broken = createHandler({ config: parseConfig({ dryRun: false }), generate: async (i) => { seen.push(i.input[0].value.command); return output(0) }, audit: async (e) => entries.push(e),
+    rules: async () => { throw Error('agent api down') } })
+  await broken({ sessionID: 's', action: 'shell', resources: ['ls -la', 'pwd'], effect: 'ask' })
+  assert.deepEqual(seen.sort(), ['ls -la', 'pwd'])
+  assert.equal(entries[0].rules, 'unavailable')
+})
+
+test('non-shell actions stay ask and are audited', async () => {
+  const entries = []
+  const handle = createHandler({ config: parseConfig({ dryRun: false }), generate: async () => output(0), audit: async (e) => entries.push(e) })
+  const ev = { sessionID: 's', action: 'edit', resources: ['a.js'], effect: 'ask' }
+  await handle(ev)
+  assert.equal(ev.effect, 'ask')
+  assert.equal(entries[0].reason, 'unsupported_action')
+  assert.equal(JSON.stringify(entries[0]).includes('a.js'), false)
+})
+
 test('timeout and errors fail back to ask', async () => {
   const cfg = parseConfig({ timeoutMs: 1000 })
   const result = await evaluateJev(() => new Promise(() => {}), event(), 'pwd', cfg)
   assert.equal(result.action, 'ask')
   assert.equal(result.reason, 'decision_unavailable')
+})
+
+test('loadAgentRules reads the agent ruleset via the SDK, falling back to the session agent', async () => {
+  const perms = [{ action: 'shell', resource: '*', effect: 'ask' }]
+  const asked = []
+  const ctx = { agent: { get: async ({ agentID }) => { asked.push(agentID); return { data: { permissions: perms } } } }, session: { get: async () => ({ agent: 'build' }) } }
+  assert.deepEqual(await loadAgentRules(ctx, { sessionID: 's', agent: 'plan' }), perms)
+  assert.deepEqual(await loadAgentRules(ctx, { sessionID: 's' }), perms)
+  assert.deepEqual(asked, ['plan', 'build'])
+  assert.equal(await loadAgentRules({}, { sessionID: 's' }), null)
 })

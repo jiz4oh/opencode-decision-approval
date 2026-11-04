@@ -38,24 +38,34 @@ Requires **OpenCode V2 2.2.0+**, with Promise plugin APIs and experimental decis
 ## How it works
 
 ```text
-OpenCode permission evaluation
-   |-- explicit deny ------------------------> denied (plugin never sees it)
-   |-- existing allow -----------------------> untouched
-   `-- ask
-        |-- non-shell / multiple resources --> native human approval
-        |-- local risk or unknown command ---> native human approval
-        |-- matches candidatePrefixes ------> native human approval (skip Jev)
-        `-- passes local safety filters
-              |-- Jev unsupported/error ------> native human approval
-              |-- probability > threshold ---> native human approval
-              `-- low risk + audit saved
-                     |-- dryRun=true --------> native human approval
-                     `-- dryRun=false -------> automatically allowed
+OpenCode permission evaluation (one event, possibly several shell resources)
+   |-- any resource denied by rules ---------> denied (plugin never sees it)
+   |-- every resource allowed ---------------> untouched
+   `-- ask  -> plugin, per resource (never joined):
+        0. non-shell / non-string resources --> native human approval (audited)
+        1. OpenCode rules (agent ruleset) ----> allow / deny / ask for EACH resource
+        2. any resource deny ----------------> whole event deny (dryRun: ask, audited)
+           rule-allowed resources drop out; ask resources continue
+        3. plugin lists on each ask resource: candidatePrefixes, forbidden tool,
+           risky path/subcommand, unsafe option, invalid -> "human ask"
+        4. any human ask --------------------> whole event native human approval (audited)
+           otherwise ONE Jev call PER remaining resource, each with its own context
+        5. any Jev non-allow (risk > threshold, error, timeout, bad answer)
+                                             -> whole event native human approval
+           all Jev allow + audit saved
+              |-- dryRun=true ---------------> native human approval
+              `-- dryRun=false --------------> automatically allowed
 ```
 
-Only the `shell` action is considered. Commands matching `candidatePrefixes` skip Jev and stay as native human approval. Other commands that pass a restrictive lexical filter are forwarded to Jev. The built-in rules reject command chaining, redirects, shell expansions, secret-like paths, common mutating tools, and known dangerous flags. This is **heuristic**, not a shell parser or a security boundary. A command such as `npm test` can execute arbitrary project scripts; use a narrow `candidatePrefixes` list on untrusted repositories.
+Only the `shell` action is considered. OpenCode splits a compound shell call into several permission resources; the plugin evaluates each resource separately and aggregates with the strictest outcome (deny > ask > allow). It never joins resources into a synthetic string.
 
-Decision requests send **the raw command** to the configured Jev provider via OpenCode. This may disclose command text and task context embedded within it to that provider; the plugin does not send session history or file contents itself. Use your organization's approved model and provider before enabling automatic approval.
+**Step 1 rules.** The plugin does not define its own rule language. It reads the resolved agent ruleset (`permissions: [{ action, resource, effect }]`) through the plugin SDK (`ctx.agent.get`, agent from the event or the session) and evaluates it with a port of OpenCode 2.2.x semantics: wildcard `*`/`?`, a trailing ` *` also matches the bare command, last matching rule wins, default `ask`. Session-level runtime rules and saved "always" approvals are not exposed to plugins; if the ruleset cannot be loaded, every resource is treated as `ask` (more review, never more allow). If the plugin's view says every resource is allowed while OpenCode asked, the event stays human ask (`rule_view_mismatch`).
+
+**Single compound resources** (`;`, newlines, `&&`, `||`, `|`, loops, heredocs, redirects, expansions inside one resource) are sent to Jev as one full string. Hard local filters match anywhere in a resource. This is **heuristic**, not a security boundary. A command such as `npm test` can execute arbitrary project scripts; use a narrow `candidatePrefixes` list on untrusted repositories.
+
+**Audit.** Each event writes one JSONL entry with the aggregate `decision`/`effective`/`reason`, `rules` (`agent` or `unavailable`), and a `resources` array of `{ index, rule, reason, decision?, riskProbability? }` per resource (reasons such as `rule_allow`, `rule_deny`, `skip_jev_prefix`, `local_risk_filter`, `unsafe_option`, `invalid_command`, `jev_low_risk`, `jev_risk_or_uncertainty`, `decision_unavailable`). Entries contain indexes and reason codes only, never command text.
+
+Decision requests send **the raw command** to the configured Jev provider via OpenCode. This may disclose command text and task context embedded within it to that provider; the plugin also sends bounded, redacted context (cwd, session title, stated purpose, related script bodies/files inside the working tree) but never session history. Use your organization's approved model and provider before enabling automatic approval.
 
 The model returns `answers: [{ type: "predicate", name: "risk", probability: number }]`. That probability represents the risk proposition being true, not approval confidence. A result at or below the configured `riskThreshold` is eligible for automatic approval. Errors, timeouts, mismatched answer types, malformed probabilities, or audit-write failures preserve native human approval.
 
