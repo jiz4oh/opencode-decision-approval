@@ -171,14 +171,25 @@ test('rule-allowed resources skip Jev; rule loading failure treats every resourc
   assert.equal(entries[0].rules, 'unavailable')
 })
 
-test('non-shell actions stay ask and are audited', async () => {
+test('external_directory path goes to Jev with rules loaded; low risk allows, path not audited', async () => {
   const entries = []
-  const handle = createHandler({ config: parseConfig({ dryRun: false }), generate: async () => output(0), audit: async (e) => entries.push(e) })
-  const ev = { sessionID: 's', action: 'edit', resources: ['a.js'], effect: 'ask' }
+  const requests = []
+  let ruleCalls = 0
+  const path = '/Users/x/.t3/worktrees/repo/issue-2/*'
+  const handle = createHandler({ config: parseConfig({ dryRun: false, riskThreshold: 0.4 }),
+    generate: async (req) => { requests.push(req); return output(0.1) }, audit: async (e) => entries.push(e),
+    rules: async () => { ruleCalls++; return [{ action: '*', resource: '*', effect: 'ask' }] } })
+  const ev = { sessionID: 's', action: 'external_directory', resources: [path], effect: 'ask' }
   await handle(ev)
-  assert.equal(ev.effect, 'ask')
-  assert.equal(entries[0].reason, 'unsupported_action')
-  assert.equal(JSON.stringify(entries[0]).includes('a.js'), false)
+  assert.equal(ev.effect, 'allow')
+  assert.equal(ruleCalls, 1)
+  assert.equal(requests[0].input[0].value.action, 'external_directory')
+  assert.equal(requests[0].input[0].value.resource, path)
+  assert.equal(entries[0].reason, 'jev_low_risk')
+  assert.equal(JSON.stringify(entries[0]).includes(path), false)
+  const risky = { ...ev, effect: 'ask' }
+  await createHandler({ config: parseConfig({ dryRun: false, riskThreshold: 0.4 }), generate: async () => output(0.8), audit: async () => {} })(risky)
+  assert.equal(risky.effect, 'ask')
 })
 
 test('timeout and errors fail back to ask', async () => {

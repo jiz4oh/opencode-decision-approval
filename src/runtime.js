@@ -20,7 +20,7 @@ export function createHandler({ config, generate, audit, collect = null, rules =
   return async (event) => {
     if (!config.enabled || event.effect !== 'ask') return
     let ruleset = null
-    if (rules && event.action === 'shell') {
+    if (rules) {
       try { ruleset = await rules(event) } catch { ruleset = null }
     }
     const plan = planEvent(event, config, ruleset)
@@ -33,7 +33,7 @@ export function createHandler({ config, generate, audit, collect = null, rules =
       if (ok && next === 'deny') event.effect = 'deny'
       return
     }
-    // Steps 3-4 human ask (also event-level skips such as unsupported_action).
+    // Steps 3-4 human ask (also event-level skips such as action_not_eligible).
     if (!plan.jev) {
       if (plan.reason) await safeAudit(audit, entry(event, { decision: 'ask', effective: 'ask', reason: plan.reason, rules: rulesSource, resources: plan.resources ?? null }))
       return

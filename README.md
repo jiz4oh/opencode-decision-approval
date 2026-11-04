@@ -42,7 +42,7 @@ OpenCode permission evaluation (one event, possibly several shell resources)
    |-- any resource denied by rules ---------> denied (plugin never sees it)
    |-- every resource allowed ---------------> untouched
    `-- ask  -> plugin, per resource (never joined):
-        0. non-shell / non-string resources --> native human approval (audited)
+        0. non-string resources / action not in eligibleActions --> native human approval (audited)
         1. OpenCode rules (agent ruleset) ----> allow / deny / ask for EACH resource
         2. any resource deny ----------------> whole event deny (dryRun: ask, audited)
            rule-allowed resources drop out; ask resources continue
@@ -57,7 +57,7 @@ OpenCode permission evaluation (one event, possibly several shell resources)
               `-- dryRun=false --------------> automatically allowed
 ```
 
-Only the `shell` action is considered. OpenCode splits a compound shell call into several permission resources; the plugin evaluates each resource separately and aggregates with the strictest outcome (deny > ask > allow). It never joins resources into a synthetic string.
+Every permission action is considered (`shell`, `edit`, `read`, `external_directory`, `webfetch`, ...). Only `shell` resources go through the command filters (candidatePrefixes / FORBIDDEN / HIGH_RISK / unsafe option); other resources (paths, patterns, URLs) are only checked for empty/oversized/NUL and then sent to Jev with their action. OpenCode splits a compound shell call into several permission resources; the plugin evaluates each resource separately and aggregates with the strictest outcome (deny > ask > allow). It never joins resources into a synthetic string.
 
 **Step 1 rules.** The plugin does not define its own rule language. It builds the ruleset the way OpenCode 2.2.5 does, in last-match-wins order: the agent's built-in permissions from the plugin SDK (`ctx.agent.get`, agent from the event or the session), then the global config `permissions` array (`$XDG_CONFIG_HOME/opencode/opencode.json`, default `~/.config/opencode/opencode.json`; OpenCode appends these to every agent, but `ctx.agent.get` returns the pre-config defaults and the plugin SDK has no config API), then non-t3code session rules. A missing or unparsable global file (including JSONC comments) contributes no rules. It evaluates the result with a port of OpenCode 2.2.x semantics: wildcard `*`/`?`, a trailing ` *` also matches the bare command, last matching rule wins, default `ask`. Session-level runtime rules and saved "always" approvals are not exposed to plugins; if the ruleset cannot be loaded, every resource is treated as `ask` (more review, never more allow). **t3code overlay.** T3 Code (OpencodeAdapter `openCodePermissionRules`) injects session rules via `session.create/update({ permission })`: `* * deny`, `<restricted> * deny`, then in approval modes `* * ask` and `<restricted> * ask` for `bash, edit, webfetch, websearch, codesearch, external_directory, doom_loop`, plus `* allow` for `question, read, glob, grep, lsp, todowrite, task, skill`, `read *.env`/`*.env.*` ask|deny, `read *.env.example` allow, mode-dependent `edit`/`webfetch`/`websearch`/`codesearch`/`external_directory` allows, writable-root `external_directory <root>/*` allow, and full-access `* * allow`. The plugin treats these as an approval UI overlay, not user policy: any of them seen in session rules are stripped (`stripT3Rules`), and other session rules are appended after the agent rules (`bash` normalized to `shell`). Because OpenCode 2.2.x does not expose session rules to plugins, the usual signal is indirect: if every resource is allowed by the visible rules but OpenCode still asked, the ask came from the overlay; it is ignored (audit `overlay: "session_ask_ignored"`) instead of dead-ending. Resources allowed by a specific rule (for example global `rtk git status *`) stay `rule_allow` and never reach Jev, though the local risk filter / unsafe-option checks still apply; resources allowed only by a bare `*` rule (an allow-all agent default) continue through steps 3-5.
 
@@ -81,9 +81,9 @@ See [`examples/decision-approval.json`](examples/decision-approval.json).
 | `model.providerID` / `model.id` | `opencode` / `jev-1.13` | OpenCode model reference, not an API endpoint |
 | `riskThreshold` | `0.01` | Maximum probability of risk eligible for auto-approval (range 0–0.5) |
 | `timeoutMs` | `6500` | Max wait before leaving approval to the user (1000–15000 ms) |
-| `maxCommandLength` | `5000` | Maximum shell text inspected |
+| `maxCommandLength` | `5000` | Maximum resource length inspected |
 | `candidatePrefixes` | `[]` | Prefixes that **skip Jev** and stay as native human ask; unmatched safe commands go to Jev |
-| `eligibleActions` | `["shell"]` | Only shell is supported |
+| `eligibleActions` | `[]` | Actions to evaluate; `[]` or `["*"]` = all |
 | `audit.enabled` | `true` | Persist audit log (recommended) |
 | `audit.path` | `null` | Absolute JSONL path; default under XDG state directory |
 

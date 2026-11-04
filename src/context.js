@@ -109,7 +109,7 @@ export async function gatherContext({ event, command, ctx, read = readFile }) {
   const info = await sessionInfo(ctx, event.sessionID)
   const meta = event.metadata && typeof event.metadata === 'object' ? event.metadata : {}
   const cwd = info.cwd ?? (typeof meta.cwd === 'string' && isAbsolute(meta.cwd) ? meta.cwd : null)
-  const evidence = await relatedEvidence(command, cwd, read)
+  const evidence = event.action === 'shell' ? await relatedEvidence(command, cwd, read) : { files: [], scripts: [] }
   const description = typeof meta.description === 'string' ? redact(meta.description).slice(0, 500) : null
   return {
     workingDirectory: cwd,

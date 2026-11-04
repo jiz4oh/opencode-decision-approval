@@ -9,9 +9,7 @@
   "riskThreshold": 0.01,
   "timeoutMs": 6500,
   "maxCommandLength": 5000,
-  "eligibleActions": [
-    "shell"
-  ],
+  "eligibleActions": ["*"],
   "candidatePrefixes": [],
   "audit": {
     "enabled": true,

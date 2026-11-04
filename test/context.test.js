@@ -46,11 +46,13 @@ test('never reads secret files or paths outside cwd', async () => {
 
 test('make includes Makefile; gatherContext carries cwd, title, purpose', async () => {
   const dir = await repo()
-  const c = await gatherContext({ event: { sessionID: 's', metadata: { description: 'Build project' } }, command: 'make build', ctx: ctx(dir) })
+  const c = await gatherContext({ event: { sessionID: 's', action: 'shell', metadata: { description: 'Build project' } }, command: 'make build', ctx: ctx(dir) })
   assert.equal(c.workingDirectory, dir)
   assert.equal(c.sessionTitle, 'fix tests')
   assert.equal(c.agentStatedPurpose, 'Build project')
   assert.match(c.relatedFiles[0].content, /go build/)
+  const other = await gatherContext({ event: { sessionID: 's', action: 'read' }, command: 'make build', ctx: ctx(dir) })
+  assert.deepEqual([other.relatedFiles, other.scripts, other.workingDirectory], [[], [], dir])
 })
 
 test('context failures degrade to no evidence, never throw', async () => {
@@ -74,5 +76,5 @@ test('handler sends gathered context to Decision API; collector errors still eva
   assert.equal(ev.effect, 'allow')
   const bad = createHandler({ config: parseConfig({ dryRun: false }), generate: async (i) => { seen = i; return output(0) }, audit: async () => {}, collect: async () => { throw Error('boom') } })
   await bad({ sessionID: 's', action: 'shell', resources: ['git status'], effect: 'ask' })
-  assert.match(seen.input[0].value.contextLimitation, /Only this command/)
+  assert.match(seen.input[0].value.contextLimitation, /Only this action and resource/)
 })

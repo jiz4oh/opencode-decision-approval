@@ -79,8 +79,12 @@ export function stripT3Rules(rules) {
   return normalizeRules(rules.filter((rule) => !isT3InjectedRule(rule)))
 }
 
+const invalidResource = (value, config) => !value.trim() || value.length > config.maxCommandLength || value.includes('\x00')
+
 // Step 3 for one resource: plugin lists decide human ask, otherwise Jev candidate.
-export function classifyResource(command, config) {
+// Only shell gets the command filters; other actions (paths, patterns, URLs) go to Jev.
+export function classifyResource(command, config, action = 'shell') {
+  if (action !== 'shell') return invalidResource(command, config) ? { reason: 'invalid_command' } : { command }
   if (!command.trim() || command.length > config.maxCommandLength || command.trim() !== command || command.includes('\x00')) {
     return { reason: 'invalid_command' }
   }
@@ -95,7 +99,9 @@ export function classifyResource(command, config) {
 // `rules` null/undefined means rules unavailable: every resource is treated as ask.
 export function planEvent(event, config, rules = null) {
   if (!event || event.effect !== 'ask') return { reason: 'not_pending' }
-  if (event.action !== 'shell') return { reason: 'unsupported_action' }
+  if (typeof event.action !== 'string' || !event.action) return { reason: 'ambiguous_resources' }
+  const eligible = config.eligibleActions ?? []
+  if (eligible.length && !eligible.includes('*') && !eligible.includes(event.action)) return { reason: 'action_not_eligible' }
   const list = event.resources
   if (!Array.isArray(list) || list.length === 0 || !list.every((r) => typeof r === 'string')) {
     return { reason: 'ambiguous_resources' }
@@ -118,7 +124,7 @@ export function planEvent(event, config, rules = null) {
   const jev = []
   for (const r of resources) {
     if (r.rule === 'allow' && !overlay) { path.push({ index: r.index, rule: 'allow', reason: 'rule_allow' }); continue }
-    const c = classifyResource(r.command, config)
+    const c = classifyResource(r.command, config, event.action)
     if (overlay && !r.broad) {
       // Specific allow under the overlay: no Jev, but the plugin's local risk filters still apply.
       const risky = c.reason === 'local_risk_filter' || c.reason === 'unsafe_option' || c.reason === 'invalid_command'

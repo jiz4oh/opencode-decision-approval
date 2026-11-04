@@ -10,7 +10,7 @@ export const DEFAULTS = Object.freeze({
   riskThreshold: 0.01,
   timeoutMs: 6500,
   maxCommandLength: 5000,
-  eligibleActions: ['shell'],
+  eligibleActions: [], // [] or ['*'] = every action
   candidatePrefixes: [],
   audit: { enabled: true, path: null },
 })
@@ -52,8 +52,9 @@ export function parseConfig(input = {}) {
   if (!Number.isInteger(config.maxCommandLength) || config.maxCommandLength < 1 || config.maxCommandLength > 5000) {
     throw new Error('maxCommandLength must be an integer between 1 and 5000')
   }
-  if (!Array.isArray(config.eligibleActions) || config.eligibleActions.length !== 1 || config.eligibleActions[0] !== 'shell') {
-    throw new Error('Only the shell permission action is supported')
+  if (!Array.isArray(config.eligibleActions) || config.eligibleActions.length > 50 ||
+      !config.eligibleActions.every((a) => typeof a === 'string' && /^(?:\*|[a-z_]{1,50})$/.test(a))) {
+    throw new Error('eligibleActions must be a list of action names ([] or ["*"] = all)')
   }
   if (!Array.isArray(config.candidatePrefixes) || config.candidatePrefixes.length > 100 ||
       !config.candidatePrefixes.every((s) => typeof s === 'string' && s.length >= 2 && s.length <= 100 && s.trim() === s && /^[\w.\- ]+$/.test(s))) {

@@ -8,10 +8,17 @@ const config = parseConfig()
 const selectCommand = (ev, cfg, rules = null) => { const p = planEvent(ev, cfg, rules); return p.jev ? { command: p.jev[0].command } : { reason: p.reason } }
 const event = (command) => ({ sessionID: 'ses_1', action: 'shell', resources: [command], effect: 'ask' })
 
-test('only asks from the shell action may be upgraded', () => {
+test('any action is planned; non-shell resources skip shell filters and go to Jev', () => {
   assert.equal(selectCommand(event('git status'), config).command, 'git status')
   assert.equal(selectCommand({ ...event('git status'), effect: 'allow' }, config).reason, 'not_pending')
-  assert.equal(selectCommand({ ...event('git status'), action: 'edit' }, config).reason, 'unsupported_action')
+  assert.equal(selectCommand({ ...event('git status'), action: 'edit' }, config).command, 'git status')
+  const ext = { sessionID: 's', action: 'external_directory', resources: ['/Users/x/.t3/worktrees/repo/issue-2/*'], effect: 'ask' }
+  assert.deepEqual(planEvent(ext, config).jev, [{ index: 0, command: ext.resources[0] }])
+  assert.equal(selectCommand({ ...ext, action: 'some_new_action' }, config).command, ext.resources[0])
+  assert.equal(selectCommand({ ...ext, resources: ['a\x00b'] }, config).reason, 'invalid_command')
+  assert.equal(selectCommand(ext, parseConfig({ eligibleActions: ['shell'] })).reason, 'action_not_eligible')
+  assert.equal(selectCommand(ext, parseConfig({ eligibleActions: ['shell', 'external_directory'] })).command, ext.resources[0])
+  assert.equal(selectCommand(ext, parseConfig({ eligibleActions: ['*'] })).command, ext.resources[0])
   assert.equal(selectCommand({ ...event('git status'), resources: ['pwd', 1] }, config).reason, 'ambiguous_resources')
   assert.equal(selectCommand({ ...event('git status'), resources: [] }, config).reason, 'ambiguous_resources')
 })
@@ -132,7 +139,10 @@ test('configuration validates thresholds and rejects unsafe changes', () => {
   assert.equal(parseConfig().dryRun, true)
   assert.deepEqual(parseConfig().candidatePrefixes, [])
   assert.throws(() => parseConfig({ riskThreshold: 1 }))
-  assert.throws(() => parseConfig({ eligibleActions: ['edit'] }))
+  assert.deepEqual(parseConfig().eligibleActions, [])
+  assert.deepEqual(parseConfig({ eligibleActions: ['shell', 'edit'] }).eligibleActions, ['shell', 'edit'])
+  assert.throws(() => parseConfig({ eligibleActions: 'shell' }))
+  assert.throws(() => parseConfig({ eligibleActions: ['bad action'] }))
   assert.throws(() => parseConfig({ dryRun: 'false' }))
   assert.throws(() => parseConfig({ arbitrary: true }))
   assert.throws(() => parseConfig({ candidatePrefixes: ['pwd; rm'] }))
