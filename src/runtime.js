@@ -7,7 +7,24 @@ export function createHandler({ config, generate, audit }) {
   return async (event) => {
     if (!config.enabled || event.effect !== 'ask') return
     const candidate = selectCommand(event, config)
-    if (!candidate.command) return
+    if (!candidate.command) {
+      if (candidate.reason === 'skip_jev_prefix') {
+        try {
+          await audit({
+            sessionID: event.sessionID,
+            agent: event.agent ?? null,
+            action: event.action,
+            decision: 'ask',
+            effective: 'ask',
+            reason: 'skip_jev_prefix',
+            riskProbability: null,
+          })
+        } catch {
+          // ignore audit failures when not auto-approving
+        }
+      }
+      return
+    }
     const result = await evaluateJev(generate, event, candidate.command, config)
     const next = config.dryRun ? 'ask' : result.action
     try {

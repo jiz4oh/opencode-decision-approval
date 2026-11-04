@@ -24,11 +24,17 @@ test('rejects command chaining, sensitive commands and expansions', () => {
   ]) assert.equal(selectCommand(event(command), config).command, undefined, command)
 })
 
-test('only configured candidate prefixes are considered', () => {
+test('candidatePrefixes skip Jev; unmatched safe commands go to Jev', () => {
   assert.equal(selectCommand(event('go test ./...'), config).command, 'go test ./...')
   assert.equal(selectCommand(event('npm install foo'), config).reason, 'local_risk_filter')
-  assert.equal(selectCommand(event('git statusfoo'), config).reason, 'not_candidate')
   assert.equal(selectCommand(event(' pwd'), config).reason, 'invalid_command')
+
+  const skip = parseConfig({ candidatePrefixes: ['git status', 'rtk git status'] })
+  assert.equal(selectCommand(event('git status'), skip).reason, 'skip_jev_prefix')
+  assert.equal(selectCommand(event('git status --short'), skip).reason, 'skip_jev_prefix')
+  assert.equal(selectCommand(event('rtk git status --short'), skip).reason, 'skip_jev_prefix')
+  assert.equal(selectCommand(event('pwd'), skip).command, 'pwd')
+  assert.equal(selectCommand(event('git statusfoo'), skip).command, 'git statusfoo')
 })
 
 test('only correctly named numeric predicate answers are accepted', () => {
@@ -45,6 +51,7 @@ test('only correctly named numeric predicate answers are accepted', () => {
 
 test('configuration validates thresholds and rejects unsafe changes', () => {
   assert.equal(parseConfig().dryRun, true)
+  assert.deepEqual(parseConfig().candidatePrefixes, [])
   assert.throws(() => parseConfig({ riskThreshold: 1 }))
   assert.throws(() => parseConfig({ eligibleActions: ['edit'] }))
   assert.throws(() => parseConfig({ dryRun: 'false' }))

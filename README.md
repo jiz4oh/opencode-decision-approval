@@ -44,7 +44,8 @@ OpenCode permission evaluation
    `-- ask
         |-- non-shell / multiple resources --> native human approval
         |-- local risk or unknown command ---> native human approval
-        `-- eligible command
+        |-- matches candidatePrefixes ------> native human approval (skip Jev)
+        `-- passes local safety filters
               |-- Jev unsupported/error ------> native human approval
               |-- probability > threshold ---> native human approval
               `-- low risk + audit saved
@@ -52,7 +53,7 @@ OpenCode permission evaluation
                      `-- dryRun=false -------> automatically allowed
 ```
 
-Only the `shell` action is considered, and only commands beginning with a configured eligible prefix and passing a restrictive lexical filter are forwarded to Jev. The built-in rules reject command chaining, redirects, shell expansions, secret-like paths, common mutating tools, and known dangerous flags. This is **heuristic**, not a shell parser or a security boundary. A command such as `npm test` can execute arbitrary project scripts; use a narrow `candidatePrefixes` list on untrusted repositories.
+Only the `shell` action is considered. Commands matching `candidatePrefixes` skip Jev and stay as native human approval. Other commands that pass a restrictive lexical filter are forwarded to Jev. The built-in rules reject command chaining, redirects, shell expansions, secret-like paths, common mutating tools, and known dangerous flags. This is **heuristic**, not a shell parser or a security boundary. A command such as `npm test` can execute arbitrary project scripts; use a narrow `candidatePrefixes` list on untrusted repositories.
 
 Decision requests send **the raw command** to the configured Jev provider via OpenCode. This may disclose command text and task context embedded within it to that provider; the plugin does not send session history or file contents itself. Use your organization's approved model and provider before enabling automatic approval.
 
@@ -71,7 +72,7 @@ See [`examples/decision-approval.json`](examples/decision-approval.json).
 | `riskThreshold` | `0.01` | Maximum probability of risk eligible for auto-approval (range 0–0.5) |
 | `timeoutMs` | `6500` | Max wait before leaving approval to the user (1000–15000 ms) |
 | `maxCommandLength` | `5000` | Maximum shell text inspected |
-| `candidatePrefixes` | See example | Allowed candidate commands; **not** unconditional permissions |
+| `candidatePrefixes` | `[]` | Prefixes that **skip Jev** and stay as native human ask; unmatched safe commands go to Jev |
 | `eligibleActions` | `["shell"]` | Only shell is supported |
 | `audit.enabled` | `true` | Persist audit log (recommended) |
 | `audit.path` | `null` | Absolute JSONL path; default under XDG state directory |

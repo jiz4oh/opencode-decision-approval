@@ -11,11 +11,7 @@ export const DEFAULTS = Object.freeze({
   timeoutMs: 6500,
   maxCommandLength: 5000,
   eligibleActions: ['shell'],
-  candidatePrefixes: [
-    'pwd', 'git status', 'git diff', 'git log', 'git branch --show-current',
-    'git rev-parse --show-toplevel', 'ls', 'rg --files',
-    'go test', 'go vet', 'cargo test', 'npm test', 'pnpm test', 'bun test',
-  ],
+  candidatePrefixes: [],
   audit: { enabled: true, path: null },
 })
 

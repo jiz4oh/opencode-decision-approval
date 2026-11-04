@@ -65,6 +65,21 @@ test('missing config uses safe defaults, malformed config fails setup', async ()
   await assert.rejects(loadConfig({ configFile: '/tmp/decision.json' }, async () => '{invalid'), /Invalid decision approval configuration/)
 })
 
+test('candidatePrefixes skip Jev without calling Decision API', async () => {
+  let calls = 0
+  const entries = []
+  const handle = createHandler({
+    config: parseConfig({ dryRun: false, candidatePrefixes: ['git status'] }),
+    generate: async () => { calls++; return output(0) },
+    audit: async (entry) => entries.push(entry),
+  })
+  const pending = event('git status --short')
+  await handle(pending)
+  assert.equal(pending.effect, 'ask')
+  assert.equal(calls, 0)
+  assert.equal(entries[0].reason, 'skip_jev_prefix')
+})
+
 test('timeout and errors fail back to ask', async () => {
   const cfg = parseConfig({ timeoutMs: 1000 })
   const result = await evaluateJev(() => new Promise(() => {}), event(), 'pwd', cfg)
