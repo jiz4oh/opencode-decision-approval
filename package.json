@@ -10,6 +10,6 @@
   "peerDependencies": { "@opencode/plugin": ">=2.2.0 <3" },
   "scripts": {
     "test": "node --test",
-    "check": "node --check index.js && node --check src/config.js && node --check src/policy.js && node --check src/decision.js && node --check src/audit.js && node --check src/runtime.js && npm test"
+    "check": "node --check index.js && node --check src/config.js && node --check src/policy.js && node --check src/decision.js && node --check src/audit.js && node --check src/runtime.js && node --check src/context.js && npm test"
   }
 }

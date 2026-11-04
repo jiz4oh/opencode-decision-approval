@@ -2,8 +2,9 @@ import { loadConfig } from './config.js'
 import { selectCommand } from './policy.js'
 import { evaluateJev } from './decision.js'
 import { createAudit } from './audit.js'
+import { gatherContext } from './context.js'
 
-export function createHandler({ config, generate, audit }) {
+export function createHandler({ config, generate, audit, collect = null }) {
   return async (event) => {
     if (!config.enabled || event.effect !== 'ask') return
     const candidate = selectCommand(event, config)
@@ -25,7 +26,11 @@ export function createHandler({ config, generate, audit }) {
       }
       return
     }
-    const result = await evaluateJev(generate, event, candidate.command, config)
+    let context = null
+    if (collect) {
+      try { context = await collect(event, candidate.command) } catch { context = null }
+    }
+    const result = await evaluateJev(generate, event, candidate.command, config, context)
     const next = config.dryRun ? 'ask' : result.action
     try {
       await audit({
@@ -56,6 +61,7 @@ export async function install(ctx) {
     config,
     generate: (input) => ctx.experimental.generate.decisions(input),
     audit,
+    collect: (event, command) => gatherContext({ event, command, ctx }),
   })
   const registration = await ctx.permission.hook('evaluate', handle)
   return () => registration.dispose()
