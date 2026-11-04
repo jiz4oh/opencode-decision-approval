@@ -65,10 +65,18 @@ export function isT3InjectedRule(rule) {
   return T3_SIGNATURES.has(`${r.action}|${r.resource}|${r.effect}`)
 }
 
+// Normalize without t3 stripping (for user-owned config rules). `home` expands a
+// leading `~/` like OpenCode does for config permissions.
+export function normalizeRules(rules, home = null) {
+  if (!Array.isArray(rules)) return []
+  return rules.map(normalizeRule).filter(Boolean)
+    .map((r) => (r.action === 'bash' ? { ...r, action: 'shell' } : r))
+    .map((r) => (home && r.resource.startsWith('~/') ? { ...r, resource: home + r.resource.slice(1) } : r))
+}
+
 export function stripT3Rules(rules) {
   if (!Array.isArray(rules)) return []
-  return rules.filter((rule) => !isT3InjectedRule(rule)).map(normalizeRule).filter(Boolean)
-    .map((r) => (r.action === 'bash' ? { ...r, action: 'shell' } : r))
+  return normalizeRules(rules.filter((rule) => !isT3InjectedRule(rule)))
 }
 
 // Step 3 for one resource: plugin lists decide human ask, otherwise Jev candidate.

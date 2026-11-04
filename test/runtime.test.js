@@ -218,6 +218,11 @@ test('loadGlobalRules reads config permissions and tolerates missing/invalid fil
   const file = JSON.stringify({ permissions: [{ action: 'shell', resource: 'rtk git status *', effect: 'allow' }, { action: 'shell', resource: 'bad' }] })
   assert.deepEqual(await loadGlobalRules(async () => file, 'x'), [{ action: 'shell', resource: 'rtk git status *', effect: 'allow' }])
   assert.deepEqual(await loadGlobalRules(async () => { throw Error('ENOENT') }, 'x'), [])
+  // Global rules are user policy: t3-looking external_directory allows are kept, `~/` expanded.
+  const ext = JSON.stringify({ permissions: [{ action: 'external_directory', resource: '~/.agents/skills/*', effect: 'allow' }] })
+  const [rule] = await loadGlobalRules(async () => ext, 'x')
+  assert.equal(rule.action, 'external_directory')
+  assert.ok(!rule.resource.startsWith('~') && rule.resource.endsWith('/.agents/skills/*'))
   assert.deepEqual(await loadGlobalRules(async () => '{ // jsonc', 'x'), [])
 })
 

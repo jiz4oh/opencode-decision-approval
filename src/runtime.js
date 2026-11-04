@@ -1,5 +1,5 @@
 import { loadConfig } from './config.js'
-import { planEvent, stripT3Rules } from './policy.js'
+import { planEvent, stripT3Rules, normalizeRules } from './policy.js'
 import { evaluateJev } from './decision.js'
 import { createAudit } from './audit.js'
 import { gatherContext } from './context.js'
@@ -74,7 +74,7 @@ export function createHandler({ config, generate, audit, collect = null, rules =
 // Session-level runtime rules and saved "always" approvals are not exposed to plugins;
 // missing rules degrade to "every resource is ask" (more review, never more allow).
 // Global `permissions` from the managed OpenCode config (the plugin SDK exposes no config
-// API). Same V2 rule shape OpenCode uses; malformed entries are dropped; [] on failure.
+// API). User-owned, so never t3-stripped; malformed entries dropped, `~/` expanded; [] on failure.
 export function globalConfigPath() {
   return join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'opencode', 'opencode.json')
 }
@@ -83,7 +83,7 @@ export async function loadGlobalRules(read = readFile, path = globalConfigPath()
   try {
     const parsed = JSON.parse(await read(path, 'utf8'))
     const list = parsed?.permissions ?? parsed?.permission
-    return Array.isArray(list) ? stripT3Rules(list) : []
+    return Array.isArray(list) ? normalizeRules(list, homedir()) : []
   } catch { return [] }
 }
 
