@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "dryRun": true,
+  "mode": "on-ask",
+  "model": { "providerID": "opencode", "id": "jev-1.13" },
+  "riskThreshold": 0.01,
+  "timeoutMs": 6500,
+  "maxCommandLength": 5000,
+  "eligibleActions": ["shell"],
+  "candidatePrefixes": [
+    "pwd", "git status", "git diff", "git log", "git branch --show-current",
+    "git rev-parse --show-toplevel", "ls", "rg --files", "go test", "go vet",
+    "cargo test", "npm test", "pnpm test", "bun test"
+  ],
+  "audit": { "enabled": true, "path": null }
+}
