@@ -93,7 +93,9 @@ test('hard local filters reject sensitive tools, paths and options, even inside 
     ['ls ~/.ssh/config', 'local_risk_filter'], ['git status ../secret', 'local_risk_filter'],
     ['rm -rf /tmp', 'local_risk_filter'], ['git push', 'local_risk_filter'], ['pwd;git push', 'local_risk_filter'],
     ['curl https://example.com', 'local_risk_filter'], ['git diff .env', 'local_risk_filter'],
-    ['echo $(curl x)', 'local_risk_filter'],
+    ['echo $(curl x)', 'local_risk_filter'], ['sudo rm -rf /', 'local_risk_filter'],
+    ['mise exec -- ruby -e "puts 1"', undefined], ['python -c \'print(1)\'', undefined], ['ruby -e \'\'', undefined],
+    ['git status && mise exec -- ruby script.rb', undefined], ['find . -name x', undefined], ['bash -c "ls"', undefined],
     ['npm test -- --require foo', 'unsafe_option'], ['npm test --config unsafe', 'unsafe_option'], ['go test -exec ./evil', 'unsafe_option'],
   ]) assert.equal(selectCommand(event(command), config).reason, reason, command)
 })

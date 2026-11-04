@@ -6,9 +6,11 @@
 //   3. plugin lists (candidatePrefixes / FORBIDDEN / HIGH_RISK / unsafe_option) -> human ask
 //   4. any human ask -> whole event ask; else each remaining resource -> its own Jev call
 //   5. any Jev non-allow -> ask; only all-allow -> allow (see runtime.js)
-const FORBIDDEN = /(?:^|[\s;&|(`])(?:sudo|su|doas|rm|rmdir|shred|mkfs|dd|chmod|chown|mount|umount|reboot|shutdown|killall|curl|wget|ssh|scp|rsync|nc|ncat|socat|ftp|sftp|eval|exec|xargs|find|env|bash|sh|zsh|python|node|ruby|perl)(?=[\s;&|)`]|$)/i;
+// Interpreters / generic tools (ruby, python, node, bash, find, env, xargs, eval...) are
+// deliberately not listed: they go to Jev and the risk threshold decides.
+const FORBIDDEN = /(?:^|[\s;&|(`])(?:sudo|su|doas|rm|rmdir|shred|mkfs|dd|chmod|chown|mount|umount|reboot|shutdown|killall|curl|wget|ssh|scp|rsync|nc|ncat|socat|ftp|sftp)(?=[\s;&|)`]|$)/i;
 const HIGH_RISK = /(?:(?:^|[ \/])\.\.(?:\/|$)|~\/|\/etc\/|\/root\/|\/proc\/|\/dev\/|\.env\b|\.ssh\/|id_rsa|secret|token|password|credential|\b(?:git\s+(?:push|reset|clean|checkout|switch|restore|rebase|merge|commit|fetch|pull)|npm\s+(?:publish|install|uninstall)|pnpm\s+(?:publish|install|add|remove)|pip\s+install)\b)/i;
-const UNSAFE_OPTION = /\s(?:--?(?:exec|preload|require|eval|config|output|out|write|delete|force|hard|upload)|-c)\b/i;
+const UNSAFE_OPTION = /\s(?:--?(?:exec|preload|require|config|output|out|write|delete|force|hard|upload))\b/i;
 
 function matchesPrefix(command, prefixes) {
   return prefixes.some((prefix) => command === prefix || command.startsWith(prefix + ' '))
