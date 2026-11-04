@@ -113,7 +113,7 @@ test('a single compound resource goes to Jev as one unsplit full-string candidat
 
 test('candidatePrefixes skip Jev; unmatched safe commands go to Jev', () => {
   assert.equal(selectCommand(event('go test ./...'), config).command, 'go test ./...')
-  assert.equal(selectCommand(event('npm install foo'), config).reason, 'local_risk_filter')
+  assert.equal(selectCommand(event('npm install foo'), config).command, 'npm install foo') // installs go to Jev; opencode allow rules short-circuit when present
   assert.equal(selectCommand(event(' pwd'), config).reason, 'invalid_command')
 
   const skip = parseConfig({ candidatePrefixes: ['git status', 'rtk git status'] })

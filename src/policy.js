@@ -9,7 +9,7 @@
 // Interpreters / generic tools (ruby, python, node, bash, find, env, xargs, eval...) are
 // deliberately not listed: they go to Jev and the risk threshold decides.
 const FORBIDDEN = /(?:^|[\s;&|(`])(?:sudo|su|doas|rm|rmdir|shred|mkfs|dd|chmod|chown|mount|umount|reboot|shutdown|killall|curl|wget|ssh|scp|rsync|nc|ncat|socat|ftp|sftp)(?=[\s;&|)`]|$)/i;
-const HIGH_RISK = /(?:(?:^|[ \/])\.\.(?:\/|$)|~\/|\/etc\/|\/root\/|\/proc\/|\/dev\/|\.env\b|\.ssh\/|id_rsa|secret|token|password|credential|\b(?:git\s+(?:push|reset|clean|checkout|switch|restore|rebase|merge|commit|fetch|pull)|npm\s+(?:publish|install|uninstall)|pnpm\s+(?:publish|install|add|remove)|pip\s+install)\b)/i;
+const HIGH_RISK = /(?:(?:^|[ \/])\.\.(?:\/|$)|~\/|\/etc\/|\/root\/|\/proc\/|\/dev\/|\.env\b|\.ssh\/|id_rsa|secret|token|password|credential|\b(?:git\s+(?:push|reset|clean|checkout|switch|restore|rebase|merge|commit|fetch|pull)|npm\s+publish|pnpm\s+publish)\b)/i;
 const UNSAFE_OPTION = /\s(?:--?(?:exec|preload|require|config|output|out|write|delete|force|hard|upload))\b/i;
 
 function matchesPrefix(command, prefixes) {
